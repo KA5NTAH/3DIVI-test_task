@@ -1,3 +1,6 @@
+# JH7HmP4AjFnkVrbgaaFi7naAUKM9KdeY
+# 1.5505343079566956 (1 result)
+
 import sys
 import random
 import math
@@ -9,23 +12,20 @@ PI = math.pi
 SIZE = 500
 
 
-def read_pgm(name):
-    """
-    Представляет изображение в формате pgm в формате двумерного листа где каждый элемент опписывает соттветсвущий
-    пиксель числом от 0 до 255
-    :param name:
-    :return data:
-    """
-    with open(name, "rb") as f:
+def read_pgm(path):
+    image = []
+    with open(path, "rb") as f:
         lines = f.readlines()
-
-    # Converts data to a list of integers
-    data = []
-    for line in lines[3:]:
-        data1 = []
-        data1.extend([int(c) for c in line.split()])
-        data.append(data1)
-    return data
+    data_line = lines[3][:]
+    data = [int(c) for c in data_line.split()]
+    index = 0
+    for i in range(500):
+        row = []
+        for j in range(500):
+            row.append(data[index])
+            index += 1
+        image.append(row)
+    return image
 
 
 def paint(img_path, data):
@@ -40,13 +40,12 @@ def paint(img_path, data):
         header = "P2\n" + "500 500\n" + "255\n"
         header_byte = bytearray(header, "utf-8")
         file.write(header_byte)
+        image = ""
         for row in data:
-            current = ""
             for element in row:
-                current += (str(element) + " ")
-            current += "\n"
-            current_row = bytearray(current, "utf-8")
-            file.write(current_row)
+                image += (str(element) + " ")
+        write_image = bytearray(image, "utf-8")
+        file.write(write_image)
 
 
 def generate(p):
@@ -137,6 +136,7 @@ def restore(img_path):
     # чтение файла
     img = read_pgm(img_path)
     corners = restore_part.main(img)
+
     with open("output.txt", "w") as answer:
         for corner in corners:
             y, x = corner
