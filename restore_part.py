@@ -42,7 +42,7 @@ def draw():
 def get_id(y, x):
     """
     Для упрощения манипуляции с элементами изображения переведем координаты в id. id по сути своей номер
-    элемента если считать справа налево и сверху вниз
+    элемента если считать справа налево и сверху вниз начиная с 1
     :param y: номер строки
     :param x: номер столбца
     :return: id
@@ -95,19 +95,20 @@ def search_cluster(key, current_id, ways_ind, image):
     all_good = False
     y2, x2, y1, x1 = 0, 0, 0, 0
 
-    current_id_inside = (current_id < SIZE * SIZE) and (current_id > 0)
+    current_id_inside = (current_id <= SIZE * SIZE) and (current_id > 0)
     second_id = current_id + key
-    second_id_inside = (second_id < SIZE * SIZE) and (second_id > 0)
+    second_id_inside = (second_id <= SIZE * SIZE) and (second_id > 0)
     if current_id_inside and second_id_inside:
         # Проверим чтобь оба пикселя не были черными Конечно согласно алгоритму Ву пара принадлежащая линии
         # должна давать суммарную яркость 255 но из за зашумления это условие с большой вероятностью будет нарушено
-        # Но вероятность того что пиксель окрасится именно в черный тем не менее довольно мала Поэтому для того
-        # чтобы считать что пара может принадлежать линии просто проверим чтобы оба пиксели были ненулевыми
+        # Однако если мы встретим пару из 0 и 255-254 то ее мы тоже засчитаем потому что даже если она получена
+        # из за шума вероятность на это довольно мала
         y1, x1 = get_coordinates(current_id)
         y2, x2 = get_coordinates(second_id)
         correction = (254, 255)
-        all_good = ((image[y1][x1] != 0) and (image[y2][x2] != 0)) \
-            or ((image[y1][x1] in correction) or (image[y2][x2] in correction))
+        all_good = (image[y1][x1] != 0 and image[y2][x2] != 0) \
+            or (image[y1][x1] in correction and image[y2][x2] == 0) \
+            or (image[y2][x2] in correction and image[y1][x1] == 0)
 
     if all_good:
         pair_points = ((y2, x2), (y1, x1))
@@ -193,43 +194,84 @@ def collect_extra_components():
     return extra_components
 
 
-def quantity_inter(row):
-    '''
-    Количество ненулевых областей (область - какое либо количество ненулевых элементов подряд) в листе
-    :param row: лист в котором проводим поиск
-    :return quantity: искомое количество
-    '''
-    quantity = 0
-    new_inter = True
-    for i in row:
-        if (i != 0) and new_inter:
-            new_inter = False
-            quantity += 1
-        if i == 0:
-            new_inter = True
-    return quantity
-
-
-def check_triangle(triangle):
+def check_vicinity(y, x):
     """
-    После того как найдены 3 вершины проверим текущий треугольник на удовлетворение требованиям указанным в условии
-    (наименьшая сторона больше 100 и наименьший угол больше 30 НО в данной функции смягчим эти требования до 80 и 20
-     соответственно чтобы учесть возможную погрешность) Основная цель отказаться от явно неподходящих координат
-    :param triangle:
+    Функция осматривает окрестность точки с координатами y ,x на наличие белых (то есть принадлежащих треугольнику
+    точек) на NEW_IMAGE Если таких точек несколько то берем среднее из их координат и возвращаем его как точку
+    пересечения
+    :param y: координата y
+    :param x: координата x
+    :return: координаты точки пересечения
+    """
+    global NEW_IMAGE
+    vicinity_inter = ()
+    frame = [0, 1, 1 + 500, 500, -1 + 500, -1, -1 - 500, -500, 1 - 500]
+    start_id = get_id(-y, x)
+    for direction in frame:
+        near_id = start_id + direction
+        if (near_id <= SIZE * SIZE) and (near_id >= 1):
+            y, x = get_coordinates(near_id)
+            if NEW_IMAGE[y][x] != 0:
+                point = (-y, x)
+                if not vicinity_inter:
+                    vicinity_inter = point
+                else:
+                    y1, x1 = vicinity_inter
+                    new_point = ((y1 - y) / 2, (x1 + x) / 2)
+                    vicinity_inter = new_point
+    return vicinity_inter
+
+
+def intersect(k, b, steep):
+    """
+    Функция ищет точки пересечения прямой заданной коэффициентами k и b (y = k*x + b) с треугольником уже прошедшим
+    очистку от шума и заданным на NEW_IMAGE
+    :param k: коэффициент в уравнении прямой
+    :param b: коэффициент в уравнении прямой
+    :param steep: Определяет порядок обхода точек прямой и зависит от наклона
     :return:
     """
-    # triangle = (a, b, c)
-    sides = []
-    angles = []
-    for i in range(3):
-        y, x = triangle[i]
-        y1, x1 = triangle[(i + 1) % 3]
-        side = ((x1 - x) ** 2 + (y1 - y) ** 2) ** 0.5
-        y2, x2 = triangle[(i + 2) % 3]
-        angle = get_angle((x2 - x, y2 - y), (x1 - x, y1 - y))
-        angles.append(angle)
-        sides.append(side)
-    return (min(angles) >= 20) and (min(sides) >= 80)
+    global NEW_IMAGE
+    intersections = []
+    offset = 2
+    if steep:
+        for y in range(0, -500, -1):
+            x = int((y - b) / k)
+            if (x < 500) and (x >= 0):
+                inter_area = check_vicinity(y, x)
+                if inter_area:
+                    inter_y, inter_x = inter_area
+                    # Поиск ближайших точек и объединение их в одну
+                    for index in range(len(intersections)):
+                        other = intersections[index]
+                        y1, x1 = other
+                        distance = ((y1 - inter_y) ** 2 + (x1 - inter_x) ** 2) ** 0.5
+                        if distance <= offset:
+                            other = ((y1 + inter_y) / 2, (x1 + inter_x) / 2)
+                            intersections[index] = other
+                            break
+                    else:
+                        intersections.append(inter_area)
+
+    else:
+        for x in range(500):
+            y = int(k * x + b)
+            if (y > -500) and (y <= 0):
+                inter_area = check_vicinity(y, x)
+                if inter_area:
+                    inter_y, inter_x = inter_area
+                    for index in range(len(intersections)):
+                        other = intersections[index]
+                        y1, x1 = other
+                        distance = ((y1 - inter_y) ** 2 + (x1 - inter_x) ** 2) ** 0.5
+                        if distance <= offset:
+                            other = ((y1 + inter_y) / 2, (x1 + inter_x) / 2)
+                            intersections[index] = other
+                            break
+                    else:
+                        intersections.append(inter_area)
+
+    return intersections
 
 
 def main(img):
@@ -251,10 +293,10 @@ def main(img):
         2) белые - принадлежат
     Можно достаточно просто найти координаты
     Сначала найдем самую левую и самую правую белую точку (первые 2 вершины)
-    Теперь осталось только проверить несколько вариантов
-        1) поиск параллельно оси x вверх начиная от верхнего края Просто движение вверх пока мы пересекаем 2 линии
-        2) Аналогичный поиск параллельно оси x вниз начиная от нижнего края
-        3) поиск между вершинами
+    Обозначим прямую на которой лежит сторона связывающая эти 2 вершины как A
+    Для того чтобы найти последнююю вершину достаточно просто смещать прмяую А параллельно самой себе вверх или вниз
+    до тех пор пока не найдем место где она перескает тругольник в одном месте
+    Когда мы найдем
     :param img:
     :return corners: вершины треугольника
     '''
@@ -289,45 +331,128 @@ def main(img):
     corners = []
     found = False
     # поиск самой левой вершины
+    right_vicinity = [-500, -500 + 1, 1, 1 + 500, 500]
     for i in range(SIZE):
         for j in range(SIZE):
             if NEW_IMAGE[j][i] != 0:
                 corner = (j, i)
-                corners.append(corner)
-                found = True
-                break
+                corner_id = get_id(j, i)
+                empty_right = True
+
+                # Проверим окрестность
+                for direction in right_vicinity:
+                    near_id = corner_id + direction
+                    if (near_id >= 1) and (near_id <= SIZE * SIZE):
+                        ny, nx = get_coordinates(near_id)
+                        if NEW_IMAGE[ny][nx] != 0:
+                            empty_right = False
+                            y, x = corner
+                            corner = ((y + ny) / 2, (x + nx) / 2)
+                # Если окрестность оказалась непустой тогда добавим точку
+
+                if not empty_right:
+                    corners.append(corner)
+                    found = True
+                    break
         if found:
             break
 
     found = False
     # поиск самой правой вершины
+    left_vicinity = [-500, -500 - 1, -1, -1 + 500, 500]
     for i in range(SIZE - 1, -1, -1):
         for j in range(SIZE):
             if NEW_IMAGE[j][i] != 0:
                 corner = (j, i)
-                corners.append(corner)
-                found = True
-                break
+                corner_id = get_id(j, i)
+                empty_left = True
+
+                # Проврим окрестность
+                for direction in left_vicinity:
+                    near_id = corner_id + direction
+                    if (near_id >= 1) and (near_id <= SIZE * SIZE):
+                        ny, nx = get_coordinates(near_id)
+                        if NEW_IMAGE[ny][nx] != 0:
+                            empty_left = False
+                            y, x = corner
+                            corner = ((y + ny) / 2, (x + nx) / 2)
+
+                # Если окрестность непустая то добавим точку
+                if not empty_left:
+                    corners.append(corner)
+                    found = True
+                    break
         if found:
             break
 
-    # поиск последней вершины
-    down = max(corners[0][0], corners[1][0])
-    up = min(corners[0][0], corners[1][0])
+    # Поиск последней вершины
+    y1, x1 = corners[0]
+    y2, x2 = corners[1]
+    y1 = -y1
+    y2 = -y2
 
-    for i in range(SIZE - 1, down + 6, -1):
-        curr = quantity_inter(NEW_IMAGE[i])
-        if curr == 1:
-            corner = (i, NEW_IMAGE[i].index(255))
-            if check_triangle(corners + [corner]):
-                corners.append(corner)
-                break
+    # Обозначим прямую А через параметры k и b в уравнении y = k*x + b
+    k = (y2 - y1) / (x2 - x1)
+    b = y2 - k * x2
+    steep = abs(y2 - y1) > abs(x2 - x1)
+    """
+    steep дает понять как обходить точки принадлежащие прямой
+    1) Перебор y и вычисление x (steep = True)
+    2) Перебор x и вычисление y (steep = False
+    """
+
+    """
+    Теперь надо понять в каком направлении двигать прямую для этого последовательно отступим вниз и вверх
+    И пойдем в ту сторону в которой количество пересечений было ненулевым
+    переменная direction определяющая направление равна +1 или -1 и определеяет изменение b
+    """
+    # Определение направления
+    test_dir = 0
+    offset = 20
+    direction = 1
+    for new_b in range(int(b) + offset, int(b) + offset + 5):
+        quantity = len(intersect(k, new_b, steep))
+        test_dir += quantity
+
+    if test_dir == 0:
+        direction = -1
+
+    # Поиск в установленном направлении
+    vicinity = []
+
+    """
+    Причиной остановить поиск будет момент когда мы наткнулись на место где тругольник уже закончился
+    Поскольку линия может прерываться будем считать что мы вышли за пределы если количество линий 
+    подряд не пересекающих ничего (void_cases) превысило void_limit
+    """
+    void_faced = False
+    void_cases_in_a_row = 0
+    void_limit = 6
+    curr_b = b + offset * direction
+    while not void_faced:
+        curr_inter = intersect(k, curr_b, steep)
+        if len(curr_inter) == 1:
+            vicinity.append(curr_inter[0])
+            void_cases_in_a_row = 0
+        elif len(curr_inter) == 0:
+            void_cases_in_a_row += 1
+        else:
+            void_cases_in_a_row = 0
+        curr_b += direction
+        void_faced = void_cases_in_a_row >= void_limit
+
+    # Объединение точек для установления окончательных координат третьей вершины
+    last_y, last_x = 0, 0
+    for (curr_y, curr_x) in vicinity:
+        last_y += curr_y
+        last_x += curr_x
+
+    if vicinity:
+        last_y = -1 * (last_y / len(vicinity))
+        last_x = last_x / len(vicinity)
+        last_corner = (last_y, last_x)
     else:
-        for i in range(up - 4):
-            curr = quantity_inter(NEW_IMAGE[i])
-            if curr == 1:
-                corner = (i, NEW_IMAGE[i].index(255))
-                if check_triangle(corners + [corner]):
-                    corners.append(corner)
-                    break
+        last_corner = (0, 0)
+    corners.append(last_corner)
+
     return corners
